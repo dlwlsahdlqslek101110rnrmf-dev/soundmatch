@@ -662,6 +662,7 @@
       text-decoration: none;
     }
     .preview-open-btn:hover { background: var(--surface2); }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
     .no-results { text-align: center; padding: 60px 0; color: var(--muted); font-size: 0.9em; letter-spacing: 0.1em; display: none; }
     .no-results.visible { display: block; }
@@ -1469,6 +1470,39 @@
     previewSong(list[0].id);
   }
 
+  // ── YouTube IFrame API ──
+  let ytPlayer = null;
+  let ytReady  = false;
+  let pendingVideoId = null;
+
+  // API 스크립트 동적 로드
+  const ytScript = document.createElement('script');
+  ytScript.src = 'https://www.youtube.com/iframe_api';
+  document.head.appendChild(ytScript);
+
+  window.onYouTubeIframeAPIReady = function() {
+    ytReady = true;
+    if (pendingVideoId) loadPlayer(pendingVideoId);
+  };
+
+  function loadPlayer(videoId) {
+    const embedEl = document.getElementById('preview-embed');
+    embedEl.innerHTML = '<div id="yt-player-div"></div>';
+    if (ytPlayer) { try { ytPlayer.destroy(); } catch(e){} }
+    ytPlayer = new YT.Player('yt-player-div', {
+      width: '100%', height: '100%',
+      videoId,
+      playerVars: { autoplay: 1, rel: 0, modestbranding: 1 },
+      events: {
+        onStateChange: e => {
+          const icon = document.querySelector('.result-item.playing .result-play-icon');
+          if (!icon) return;
+          icon.textContent = e.data === YT.PlayerState.PLAYING ? '■' : '▶';
+        }
+      }
+    });
+  }
+
   function extractVideoId(url) {
     const m = url.match(/[?&]v=([^&]+)/);
     return m ? m[1] : null;
@@ -1484,26 +1518,63 @@
     document.getElementById('preview-song-title').textContent = s.title;
     document.getElementById('preview-song-artist').textContent = s.artist;
     document.getElementById('preview-open-btn').href = s.youtube;
-    const embedEl = document.getElementById('preview-embed');
+
     const videoId = extractVideoId(s.youtube);
     if (videoId) {
-      embedEl.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+      if (ytReady) {
+        loadPlayer(videoId);
+      } else {
+        pendingVideoId = videoId;
+        document.getElementById('preview-embed').innerHTML = `
+          <div class="preview-placeholder">
+            <div class="preview-placeholder-icon" style="animation:spin 1s linear infinite">↻</div>
+            <div class="preview-placeholder-text">로딩 중...</div>
+          </div>`;
+      }
     } else {
-      embedEl.innerHTML = `<div class="preview-placeholder">
-        <div class="preview-placeholder-icon">♪</div>
-        <div style="font-size:0.78em;color:var(--text);text-align:center;padding:0 20px;line-height:1.8">${s.title}<br><span style="color:var(--muted);font-size:0.9em">${s.artist}</span></div>
-        <div class="preview-placeholder-text">유튜브 검색으로 이동</div>
-      </div>`;
+      if (ytPlayer) { try { ytPlayer.destroy(); ytPlayer = null; } catch(e){} }
+      document.getElementById('preview-embed').innerHTML = `
+        <div class="preview-placeholder">
+          <div class="preview-placeholder-icon">♪</div>
+          <div style="font-size:0.78em;color:var(--text);text-align:center;padding:0 20px;line-height:1.8">${s.title}<br><span style="color:var(--muted);font-size:0.9em">${s.artist}</span></div>
+          <div class="preview-placeholder-text">유튜브 검색으로 이동</div>
+        </div>`;
     }
   }
 
   function closePreview() {
-    document.querySelectorAll('.result-item').forEach(el => { el.classList.remove('playing'); el.querySelector('.result-play-icon').textContent = '▶'; });
+    if (ytPlayer) { try { ytPlayer.stopVideo(); ytPlayer.destroy(); ytPlayer = null; } catch(e){} }
+    document.querySelectorAll('.result-item').forEach(el => {
+      el.classList.remove('playing');
+      el.querySelector('.result-play-icon').textContent = '▶';
+    });
     document.getElementById('preview-song-title').textContent = '곡을 선택하세요';
     document.getElementById('preview-song-artist').textContent = '← 왼쪽 목록에서 클릭';
     document.getElementById('preview-open-btn').href = '#';
-    document.getElementById('preview-embed').innerHTML = `<div class="preview-placeholder"><div class="preview-placeholder-icon">♪</div><div class="preview-placeholder-text">PREVIEW</div></div>`;
+    document.getElementById('preview-embed').innerHTML = `
+      <div class="preview-placeholder">
+        <div class="preview-placeholder-icon">♪</div>
+        <div class="preview-placeholder-text">PREVIEW</div>
+      </div>`;
   }
+
+  // ── 스페이스바: 재생 / 일시정지 ──
+  document.addEventListener('keydown', e => {
+    if (e.code !== 'Space') return;
+    // 입력창 포커스 중엔 무시
+    const tag = document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    e.preventDefault();
+    if (!ytPlayer || !ytPlayer.getPlayerState) return;
+    const state = ytPlayer.getPlayerState();
+    if (state === YT.PlayerState.PLAYING) {
+      ytPlayer.pauseVideo();
+      showToast('⏸ 일시정지');
+    } else {
+      ytPlayer.playVideo();
+      showToast('▶ 재생');
+    }
+  });
 
   function showNoResults(msg) {
     document.getElementById('results').classList.remove('visible');
